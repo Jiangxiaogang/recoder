@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="orientation_labels">
+        <item>横屏</item>
+        <item>竖屏</item>
+        <item>自动</item>
+    </string-array>
+
+    <string-array name="segment_labels">
+        <item>1 分钟</item>
+        <item>3 分钟</item>
+        <item>5 分钟</item>
+        <item>10 分钟</item>
+        <item>30 分钟</item>
+        <item>60 分钟</item>
+        <item>不分割</item>
+    </string-array>
+</resources>

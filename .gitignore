@@ -1,0 +1,13 @@
+# Gradle / Android Studio
+.gradle/
+build/
+app/build/
+local.properties
+
+# 签名文件（不要提交）
+keystore/
+keystore.properties
+
+# IDE
+.idea/
+*.iml

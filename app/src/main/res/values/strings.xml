@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">记录仪</string>
+
+    <string name="status_idle">未在录制</string>
+    <string name="status_recording">● 录制中 %1$s</string>
+    <string name="status_error">录制出错</string>
+
+    <string name="detail_idle">选择参数后点击“开始录制”。</string>
+    <string name="detail_starting">正在启动相机…</string>
+    <string name="detail_file">当前文件：%1$s</string>
+
+    <string name="label_resolution">分辨率</string>
+    <string name="label_fps">帧率</string>
+    <string name="label_orientation">视频方向</string>
+    <string name="label_segment">文件分段</string>
+
+    <string name="fps_value">%1$d fps</string>
+
+    <string name="btn_start">开始录制</string>
+    <string name="btn_stop">停止录制</string>
+
+    <string name="tip_power">提示：开始录制后可直接按 POWER 键熄屏，录制会在后台继续；也可以退回桌面。</string>
+    <string name="save_dir">保存目录：%1$s</string>
+
+    <string name="toast_started">已开始录制，可按 POWER 键熄屏</string>
+    <string name="toast_error">%1$s</string>
+    <string name="toast_permission">缺少相机 / 麦克风 / 存储权限，无法录制</string>
+
+    <string name="notif_preparing">正在准备录制…</string>
+    <string name="notif_recording">录制中 %1$s · %2$s</string>
+    <string name="notif_error">录制出错：%1$s</string>
+</resources>
