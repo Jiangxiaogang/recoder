@@ -6,6 +6,13 @@
         <item>自动</item>
     </string-array>
 
+    <string-array name="feedback_labels">
+        <item>无</item>
+        <item>音效</item>
+        <item>振动</item>
+        <item>音效+振动</item>
+    </string-array>
+
     <string-array name="segment_labels">
         <item>1 分钟</item>
         <item>3 分钟</item>

@@ -58,12 +58,21 @@ public class MainActivity extends Activity {
             RecorderConfig.ORIENTATION_AUTO
     };
 
+    /** 与 arrays.xml 中 feedback_labels 一一对应。 */
+    private static final int[] FEEDBACK_VALUES = {
+            RecorderConfig.FEEDBACK_NONE,
+            RecorderConfig.FEEDBACK_SOUND,
+            RecorderConfig.FEEDBACK_VIBRATE,
+            RecorderConfig.FEEDBACK_SOUND_VIBRATE
+    };
+
     private static final String PREF_WIDTH = RecorderPrefs.KEY_WIDTH;
     private static final String PREF_HEIGHT = RecorderPrefs.KEY_HEIGHT;
     private static final String PREF_FPS = RecorderPrefs.KEY_FPS;
     private static final String PREF_SEGMENT = RecorderPrefs.KEY_SEGMENT;
     private static final String PREF_ORIENTATION = RecorderPrefs.KEY_ORIENTATION;
     private static final String PREF_CAMERA = RecorderPrefs.KEY_CAMERA;
+    private static final String PREF_FEEDBACK = RecorderPrefs.KEY_FEEDBACK;
     private static final String PREF_CONFIG_VERSION = RecorderPrefs.KEY_CONFIG_VERSION;
     private static final int CONFIG_VERSION = RecorderPrefs.CONFIG_VERSION;
 
@@ -88,6 +97,7 @@ public class MainActivity extends Activity {
     private Spinner mSpFps;
     private Spinner mSpOrientation;
     private Spinner mSpSegment;
+    private Spinner mSpFeedback;
     private Button mBtnToggle;
     private SharedPreferences mPrefs;
 
@@ -111,6 +121,7 @@ public class MainActivity extends Activity {
         mSpFps = (Spinner) findViewById(R.id.sp_fps);
         mSpOrientation = (Spinner) findViewById(R.id.sp_orientation);
         mSpSegment = (Spinner) findViewById(R.id.sp_segment);
+        mSpFeedback = (Spinner) findViewById(R.id.sp_feedback);
         mBtnToggle = (Button) findViewById(R.id.btn_toggle);
 
         ArrayAdapter<String> orientationAdapter = new ArrayAdapter<String>(
@@ -126,6 +137,13 @@ public class MainActivity extends Activity {
         segmentAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         mSpSegment.setAdapter(segmentAdapter);
         mSpSegment.setSelection(DEFAULT_SEGMENT_INDEX);
+
+        ArrayAdapter<String> feedbackAdapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item,
+                getResources().getStringArray(R.array.feedback_labels));
+        feedbackAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        mSpFeedback.setAdapter(feedbackAdapter);
+        mSpFeedback.setSelection(defaultFeedbackIndex());
 
         mBtnToggle.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -179,6 +197,18 @@ public class MainActivity extends Activity {
         });
 
         mSpSegment.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                persistCurrentConfig();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // no-op
+            }
+        });
+
+        mSpFeedback.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 persistCurrentConfig();
@@ -432,6 +462,15 @@ public class MainActivity extends Activity {
         return 0;
     }
 
+    private static int defaultFeedbackIndex() {
+        for (int i = 0; i < FEEDBACK_VALUES.length; i++) {
+            if (FEEDBACK_VALUES[i] == RecorderConfig.DEFAULT_FEEDBACK) {
+                return i;
+            }
+        }
+        return 1;
+    }
+
     private void restoreSelection() {
         int width = mPrefs.getInt(PREF_WIDTH, -1);
         int height = mPrefs.getInt(PREF_HEIGHT, -1);
@@ -477,6 +516,16 @@ public class MainActivity extends Activity {
             }
         }
         mSpOrientation.setSelection(orientationIndex);
+
+        int feedback = mPrefs.getInt(PREF_FEEDBACK, RecorderConfig.DEFAULT_FEEDBACK);
+        int feedbackIndex = 0;
+        for (int i = 0; i < FEEDBACK_VALUES.length; i++) {
+            if (FEEDBACK_VALUES[i] == feedback) {
+                feedbackIndex = i;
+                break;
+            }
+        }
+        mSpFeedback.setSelection(feedbackIndex);
     }
 
     private RecorderConfig readConfig() {
@@ -511,7 +560,14 @@ public class MainActivity extends Activity {
             orientation = ORIENTATION_VALUES[orientationIndex];
         }
 
-        return new RecorderConfig(size[0], size[1], fps, segmentMs, orientation, selectedCameraId());
+        int feedbackIndex = mSpFeedback.getSelectedItemPosition();
+        int feedback = RecorderConfig.DEFAULT_FEEDBACK;
+        if (feedbackIndex >= 0 && feedbackIndex < FEEDBACK_VALUES.length) {
+            feedback = FEEDBACK_VALUES[feedbackIndex];
+        }
+
+        return new RecorderConfig(size[0], size[1], fps, segmentMs, orientation,
+                selectedCameraId(), feedback);
     }
 
     private void saveConfig(RecorderConfig config) {
@@ -589,6 +645,7 @@ public class MainActivity extends Activity {
         mSpFps.setEnabled(!busy);
         mSpOrientation.setEnabled(!busy);
         mSpSegment.setEnabled(!busy);
+        mSpFeedback.setEnabled(!busy);
         mDir.setText(getString(R.string.save_dir, outputDirPath()));
     }
 

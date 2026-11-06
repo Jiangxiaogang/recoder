@@ -17,6 +17,7 @@ public final class RecorderPrefs {
     public static final String KEY_SEGMENT = "segment_ms";
     public static final String KEY_ORIENTATION = "orientation";
     public static final String KEY_CAMERA = "camera_id";
+    public static final String KEY_FEEDBACK = "feedback_mode";
     public static final String KEY_CONFIG_VERSION = "config_version";
     private static final String KEY_MIGRATED = "migrated_to_recorder_prefs";
 
@@ -45,6 +46,7 @@ public final class RecorderPrefs {
             editor.putLong(KEY_SEGMENT, old.getLong(KEY_SEGMENT, RecorderConfig.DEFAULT_SEGMENT_MS));
             editor.putInt(KEY_ORIENTATION, old.getInt(KEY_ORIENTATION, RecorderConfig.DEFAULT_ORIENTATION));
             editor.putInt(KEY_CAMERA, old.getInt(KEY_CAMERA, RecorderConfig.DEFAULT_CAMERA_ID));
+            editor.putInt(KEY_FEEDBACK, old.getInt(KEY_FEEDBACK, RecorderConfig.DEFAULT_FEEDBACK));
             editor.putInt(KEY_CONFIG_VERSION, old.getInt(KEY_CONFIG_VERSION, CONFIG_VERSION));
         }
         editor.putBoolean(KEY_MIGRATED, true).apply();
@@ -58,7 +60,8 @@ public final class RecorderPrefs {
                 prefs.getInt(KEY_FPS, RecorderConfig.DEFAULT_FPS),
                 prefs.getLong(KEY_SEGMENT, RecorderConfig.DEFAULT_SEGMENT_MS),
                 prefs.getInt(KEY_ORIENTATION, RecorderConfig.DEFAULT_ORIENTATION),
-                prefs.getInt(KEY_CAMERA, RecorderConfig.DEFAULT_CAMERA_ID));
+                prefs.getInt(KEY_CAMERA, RecorderConfig.DEFAULT_CAMERA_ID),
+                prefs.getInt(KEY_FEEDBACK, RecorderConfig.DEFAULT_FEEDBACK));
     }
 
     public static void save(Context context, RecorderConfig config) {
@@ -69,6 +72,7 @@ public final class RecorderPrefs {
                 .putLong(KEY_SEGMENT, config.segmentMs)
                 .putInt(KEY_ORIENTATION, config.orientation)
                 .putInt(KEY_CAMERA, config.cameraId)
+                .putInt(KEY_FEEDBACK, config.feedbackMode)
                 .putInt(KEY_CONFIG_VERSION, CONFIG_VERSION)
                 .apply();
     }

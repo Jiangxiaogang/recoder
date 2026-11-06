@@ -15,6 +15,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.os.Vibrator;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.Surface;
@@ -43,6 +44,8 @@ public class RecorderService extends Service {
     private static final int TICK_INTERVAL_MS = 1000;
     private static final int GRACE_TICKS = 5;
     private static final long TOGGLE_DEBOUNCE_MS = 500;
+    /** 开始音播放结束后再留一点余量，让扬声器尾音/混响衰减（真正的延迟由音频播放完成回调决定）。 */
+    private static final int START_SETTLE_MS = 120;
 
     private final Handler mMain = new Handler(Looper.getMainLooper());
 
@@ -51,12 +54,26 @@ public class RecorderService extends Service {
     private RecorderConfig mConfig;
     private MediaSession mMediaSession;
     private SoundPlayer mSound;
+    private Vibrator mVibrator;
     private boolean mStopRequested;
     private boolean mExitRequested;
     private boolean mStandby;
+    private boolean mStartPending;
     private boolean mWasRecording;
     private long mLastToggleElapsed;
     private int mTicks;
+
+    /** 播放完开始提示音后再真正启动录制。 */
+    private final Runnable mStartRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!mStartPending || mStopRequested || mExitRequested) {
+                return;
+            }
+            mStartPending = false;
+            startPreviewSurface();
+        }
+    };
 
     private final Runnable mUpdate = new Runnable() {
         @Override
@@ -106,7 +123,10 @@ public class RecorderService extends Service {
                     boolean recording = engine.getState() == RecorderEngine.STATE_RECORDING;
                     if (recording != mWasRecording) {
                         mWasRecording = recording;
-                        playToggleSound(recording);
+                        if (!recording) {
+                            // 停止时录音链已释放，此时反馈不受影响
+                            feedbackStop();
+                        }
                         updatePlaybackState();
                     }
                     if (!mStopRequested && !mExitRequested && recording) {
@@ -125,6 +145,7 @@ public class RecorderService extends Service {
         super.onCreate();
         initMediaSession();
         mSound = new SoundPlayer(this);
+        mVibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         RecorderEngine.get().setListener(mEngineListener);
     }
 
@@ -152,7 +173,7 @@ public class RecorderService extends Service {
         }
 
         if (ACTION_START.equals(action)) {
-            if (RecorderEngine.get().isBusy() || mPreviewSurface != null) {
+            if (RecorderEngine.get().isBusy() || mPreviewSurface != null || mStartPending) {
                 // 已经在录制或正在准备，忽略重复的启动请求
                 return START_STICKY;
             }
@@ -161,7 +182,7 @@ public class RecorderService extends Service {
         }
 
         if (ACTION_STANDBY.equals(action)) {
-            if (!RecorderEngine.get().isBusy()) {
+            if (!RecorderEngine.get().isBusy() && !mStartPending) {
                 enterStandby();
             }
             return START_STICKY;
@@ -187,8 +208,16 @@ public class RecorderService extends Service {
         mTicks = 0;
         acquireWakeLock();
         startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notif_preparing), false));
-        startPreviewSurface();
         updatePlaybackState();
+        // 先完成启停反馈，再启动相机/录音，避免音频输入链路切换把提示音弄脏
+        mStartPending = true;
+        mMain.removeCallbacks(mStartRunnable);
+        boolean played = feedbackStart();
+        int delay = 0;
+        if (played && mSound != null) {
+            delay = mSound.getStartDurationMs() + START_SETTLE_MS;
+        }
+        mMain.postDelayed(mStartRunnable, delay);
         mMain.removeCallbacks(mUpdate);
         mMain.postDelayed(mUpdate, TICK_INTERVAL_MS);
     }
@@ -198,6 +227,8 @@ public class RecorderService extends Service {
         mStandby = true;
         mStopRequested = false;
         mWasRecording = false;
+        mStartPending = false;
+        mMain.removeCallbacks(mStartRunnable);
         mMain.removeCallbacks(mUpdate);
         releasePreview();
         releaseWakeLock();
@@ -206,6 +237,14 @@ public class RecorderService extends Service {
     }
 
     private void requestStop() {
+        if (mStartPending) {
+            // 开始音还在播、录制尚未启动：直接取消并回到待机
+            mStartPending = false;
+            mMain.removeCallbacks(mStartRunnable);
+            playStopSound();
+            enterStandby();
+            return;
+        }
         if (mStandby && !RecorderEngine.get().isBusy()) {
             return;
         }
@@ -216,6 +255,8 @@ public class RecorderService extends Service {
     }
 
     private void shutdown() {
+        mStartPending = false;
+        mMain.removeCallbacks(mStartRunnable);
         mMain.removeCallbacks(mUpdate);
         releasePreview();
         releaseWakeLock();
@@ -320,7 +361,7 @@ public class RecorderService extends Service {
             return;
         }
         mLastToggleElapsed = now;
-        if (RecorderEngine.get().isBusy()) {
+        if (RecorderEngine.get().isBusy() || mStartPending) {
             Log.i(TAG, "硬件按键：停止录制");
             requestStop();
         } else {
@@ -348,14 +389,49 @@ public class RecorderService extends Service {
         }
     }
 
-    /** 开始：一声稍长的「叮~」；停止：两声较短的「咚咚」。 */
-    private void playToggleSound(boolean start) {
-        if (mSound == null) {
+    /** 开始：一声稍长的「叮~」；播放完成后回调，由调用方决定何时真正启动录制。 */
+    /** 开始反馈：按设置振动和/或播放音效；返回开始音效是否已真正开始播放。 */
+    private boolean feedbackStart() {
+        boolean vibration = mConfig != null && mConfig.hasVibrationFeedback();
+        if (vibration) {
+            vibrate(true);
+        }
+        if (mConfig != null && mConfig.hasSoundFeedback() && mSound != null) {
+            return mSound.playStart();
+        }
+        return false;
+    }
+
+    private void feedbackStop() {
+        boolean sound = mConfig != null && mConfig.hasSoundFeedback();
+        boolean vibration = mConfig != null && mConfig.hasVibrationFeedback();
+        if (vibration) {
+            vibrate(false);
+        }
+        if (sound) {
+            playStopSound();
+        }
+    }
+
+    /** 开始：一次较长振动；停止：两次短振，便于分辨。 */
+    private void vibrate(boolean start) {
+        if (mVibrator == null || !mVibrator.hasVibrator()) {
             return;
         }
-        if (start) {
-            mSound.playStart();
-        } else {
+        try {
+            if (start) {
+                mVibrator.vibrate(180);
+            } else {
+                mVibrator.vibrate(new long[]{0, 90, 80, 90}, -1);
+            }
+            Log.i(TAG, start ? "振动：开始" : "振动：停止");
+        } catch (Throwable t) {
+            Log.w(TAG, "振动失败", t);
+        }
+    }
+
+    private void playStopSound() {
+        if (mSound != null) {
             mSound.playStop();
         }
     }
@@ -366,6 +442,7 @@ public class RecorderService extends Service {
 
     @Override
     public void onDestroy() {
+        mMain.removeCallbacks(mStartRunnable);
         mMain.removeCallbacks(mUpdate);
         RecorderEngine.get().setListener(null);
         releasePreview();
@@ -382,6 +459,14 @@ public class RecorderService extends Service {
         if (mSound != null) {
             mSound.release();
             mSound = null;
+        }
+        if (mVibrator != null) {
+            try {
+                mVibrator.cancel();
+            } catch (Throwable ignored) {
+                // ignore
+            }
+            mVibrator = null;
         }
         super.onDestroy();
     }

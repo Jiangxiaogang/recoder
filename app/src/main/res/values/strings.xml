@@ -15,13 +15,13 @@
     <string name="label_fps">帧率</string>
     <string name="label_orientation">视频方向</string>
     <string name="label_segment">文件分段</string>
+    <string name="label_feedback">提示音</string>
 
     <string name="fps_value">%1$d fps</string>
 
     <string name="btn_start">开始录制</string>
     <string name="btn_stop">停止录制</string>
 
-    <string name="tip_power">提示：开始录制后可直接按 POWER 键熄屏，录制会在后台继续；也可以退回桌面。</string>
     <string name="save_dir">保存目录：%1$s</string>
 
     <string name="toast_started">已开始录制，可按 POWER 键熄屏</string>

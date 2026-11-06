@@ -13,12 +13,23 @@ public final class RecorderConfig {
     public static final String EXTRA_SEGMENT_MS = "rec_segment_ms";
     public static final String EXTRA_ORIENTATION = "rec_orientation";
     public static final String EXTRA_CAMERA_ID = "rec_camera_id";
+    public static final String EXTRA_FEEDBACK = "rec_feedback";
 
     public static final int DEFAULT_WIDTH = 1280;
     public static final int DEFAULT_HEIGHT = 720;
     public static final int DEFAULT_FPS = 30;
     public static final long DEFAULT_SEGMENT_MS = 5 * 60 * 1000L;
     public static final int DEFAULT_CAMERA_ID = 0;
+
+    /** 启停反馈方式：无。 */
+    public static final int FEEDBACK_NONE = 0;
+    /** 启停反馈方式：音效（WAV）。 */
+    public static final int FEEDBACK_SOUND = 1;
+    /** 启停反馈方式：振动。 */
+    public static final int FEEDBACK_VIBRATE = 2;
+    /** 启停反馈方式：音效 + 振动。 */
+    public static final int FEEDBACK_SOUND_VIBRATE = 3;
+    public static final int DEFAULT_FEEDBACK = FEEDBACK_SOUND;
 
     /** 视频方向：强制横屏（文件为 1920×1080 等横向尺寸）。 */
     public static final int ORIENTATION_LANDSCAPE = 0;
@@ -36,16 +47,23 @@ public final class RecorderConfig {
     public final int orientation;
     /** Camera1 的摄像头 id。 */
     public final int cameraId;
+    /** 开始/停止反馈方式。 */
+    public final int feedbackMode;
 
     public RecorderConfig(int width, int height, int fps, long segmentMs) {
-        this(width, height, fps, segmentMs, DEFAULT_ORIENTATION, DEFAULT_CAMERA_ID);
+        this(width, height, fps, segmentMs, DEFAULT_ORIENTATION, DEFAULT_CAMERA_ID, DEFAULT_FEEDBACK);
     }
 
     public RecorderConfig(int width, int height, int fps, long segmentMs, int orientation) {
-        this(width, height, fps, segmentMs, orientation, DEFAULT_CAMERA_ID);
+        this(width, height, fps, segmentMs, orientation, DEFAULT_CAMERA_ID, DEFAULT_FEEDBACK);
     }
 
     public RecorderConfig(int width, int height, int fps, long segmentMs, int orientation, int cameraId) {
+        this(width, height, fps, segmentMs, orientation, cameraId, DEFAULT_FEEDBACK);
+    }
+
+    public RecorderConfig(int width, int height, int fps, long segmentMs, int orientation, int cameraId,
+                          int feedbackMode) {
         this.width = Math.max(160, width);
         this.height = Math.max(120, height);
         this.fps = Math.max(1, Math.min(60, fps));
@@ -53,6 +71,8 @@ public final class RecorderConfig {
         this.orientation = (orientation == ORIENTATION_PORTRAIT || orientation == ORIENTATION_AUTO)
                 ? orientation : ORIENTATION_LANDSCAPE;
         this.cameraId = Math.max(0, cameraId);
+        this.feedbackMode = (feedbackMode >= FEEDBACK_NONE && feedbackMode <= FEEDBACK_SOUND_VIBRATE)
+                ? feedbackMode : DEFAULT_FEEDBACK;
     }
 
     public boolean isPortrait() {
@@ -73,6 +93,27 @@ public final class RecorderConfig {
         return "横屏";
     }
 
+    public boolean hasSoundFeedback() {
+        return feedbackMode == FEEDBACK_SOUND || feedbackMode == FEEDBACK_SOUND_VIBRATE;
+    }
+
+    public boolean hasVibrationFeedback() {
+        return feedbackMode == FEEDBACK_VIBRATE || feedbackMode == FEEDBACK_SOUND_VIBRATE;
+    }
+
+    public String feedbackName() {
+        switch (feedbackMode) {
+            case FEEDBACK_NONE:
+                return "无";
+            case FEEDBACK_VIBRATE:
+                return "振动";
+            case FEEDBACK_SOUND_VIBRATE:
+                return "音效+振动";
+            default:
+                return "音效";
+        }
+    }
+
     public void putTo(Intent intent) {
         intent.putExtra(EXTRA_WIDTH, width);
         intent.putExtra(EXTRA_HEIGHT, height);
@@ -80,6 +121,7 @@ public final class RecorderConfig {
         intent.putExtra(EXTRA_SEGMENT_MS, segmentMs);
         intent.putExtra(EXTRA_ORIENTATION, orientation);
         intent.putExtra(EXTRA_CAMERA_ID, cameraId);
+        intent.putExtra(EXTRA_FEEDBACK, feedbackMode);
     }
 
     public static RecorderConfig fromIntent(Intent intent) {
@@ -92,7 +134,8 @@ public final class RecorderConfig {
                 intent.getIntExtra(EXTRA_FPS, DEFAULT_FPS),
                 intent.getLongExtra(EXTRA_SEGMENT_MS, DEFAULT_SEGMENT_MS),
                 intent.getIntExtra(EXTRA_ORIENTATION, DEFAULT_ORIENTATION),
-                intent.getIntExtra(EXTRA_CAMERA_ID, DEFAULT_CAMERA_ID));
+                intent.getIntExtra(EXTRA_CAMERA_ID, DEFAULT_CAMERA_ID),
+                intent.getIntExtra(EXTRA_FEEDBACK, DEFAULT_FEEDBACK));
     }
 
     public String describe() {
