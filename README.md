@@ -105,7 +105,7 @@ android.bat adb install -r release\Recorder-1.0-release.apk
 | 摄像头选择 | 用 `Camera.getNumberOfCameras()` + `Camera.getCameraInfo()` 列出设备摄像头（后置/前置/外接），按 `Camera.open(id)` 打开所选摄像头，`CamcorderProfile` 与录制参数也都按该 id 查询 |
 | 画面方向 | 用「视频方向」下拉控制：横屏 → `setOrientationHint(0°)`（文件为 1920×1080 等横向）；竖屏 → `setOrientationHint(90°，即传感器方向)`（横向缓冲 + 旋转标记，播放器显示为 1080×1920 等竖向）；自动 → 按**每段录制开始时**的屏幕方向计算 `hint = (传感器方向 - 屏幕旋转角度 + 360) % 360`，竖持正立、横持也正立 |
 | 蓝牙按键启停 | 前台服务持有活跃 `MediaSession`，`onMediaButtonEvent` 接收 `KEYCODE_MEDIA_PLAY_PAUSE`（兼容 MEDIA_PLAY/PAUSE/HEADSETHOOK），500ms 去抖后切换录制；待机时服务常驻前台，通知显示“待机中” |
-| 开始/停止提示音 | 播放内置 WAV：`res/raw/start_ding.wav`（1.2kHz 单频「叮~」，380ms，带衰减尾音）和 `res/raw/stop_dong.wav`（两声「咚咚」，各 110ms，间隔 70ms），用 `SoundPool` 播放；在引擎真正进入/退出 RECORDING 状态时触发。替换这两个 WAV 文件即可自定义提示音 |
+| 开始/停止提示音 | 播放内置 WAV：`res/raw/start.wav`（1.2kHz 单频「叮~」，380ms，带衰减尾音）和 `res/raw/stop.wav`（两声「咚咚」，各 110ms，间隔 70ms），用 `SoundPool` 播放；在引擎真正进入/退出 RECORDING 状态时触发。替换这两个 WAV 文件即可自定义提示音 |
 
 - 编码：H.264 视频 + AAC 音频，容器 MP4；
 - 码率：优先取 `CamcorderProfile` 的码率，按实际帧率等比例调整。

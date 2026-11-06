@@ -45,8 +45,8 @@ final class SoundPlayer {
                     }
                 }
             });
-            mStartId = mSoundPool.load(context, R.raw.start_ding, 1);
-            mStopId = mSoundPool.load(context, R.raw.stop_dong, 1);
+            mStartId = mSoundPool.load(context, R.raw.start, 1);
+            mStopId = mSoundPool.load(context, R.raw.stop, 1);
         } catch (Throwable t) {
             Log.w(TAG, "初始化音效池失败", t);
             mSoundPool = null;
