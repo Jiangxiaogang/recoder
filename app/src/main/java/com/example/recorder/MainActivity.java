@@ -11,6 +11,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.Spinner;
@@ -57,14 +58,14 @@ public class MainActivity extends Activity {
             RecorderConfig.ORIENTATION_AUTO
     };
 
-    private static final String PREF_WIDTH = "width";
-    private static final String PREF_HEIGHT = "height";
-    private static final String PREF_FPS = "fps";
-    private static final String PREF_SEGMENT = "segment_ms";
-    private static final String PREF_ORIENTATION = "orientation";
-    private static final String PREF_CONFIG_VERSION = "config_version";
-    /** 配置版本：升级到 2 时清空旧的默认选择，改用“最高分辨率/最高帧率/5 分钟分段”。 */
-    private static final int CONFIG_VERSION = 2;
+    private static final String PREF_WIDTH = RecorderPrefs.KEY_WIDTH;
+    private static final String PREF_HEIGHT = RecorderPrefs.KEY_HEIGHT;
+    private static final String PREF_FPS = RecorderPrefs.KEY_FPS;
+    private static final String PREF_SEGMENT = RecorderPrefs.KEY_SEGMENT;
+    private static final String PREF_ORIENTATION = RecorderPrefs.KEY_ORIENTATION;
+    private static final String PREF_CAMERA = RecorderPrefs.KEY_CAMERA;
+    private static final String PREF_CONFIG_VERSION = RecorderPrefs.KEY_CONFIG_VERSION;
+    private static final int CONFIG_VERSION = RecorderPrefs.CONFIG_VERSION;
 
     private final Handler mUi = new Handler(Looper.getMainLooper());
     private final Runnable mTicker = new Runnable() {
@@ -77,10 +78,12 @@ public class MainActivity extends Activity {
 
     private final List<int[]> mSizes = new ArrayList<int[]>();
     private final List<Integer> mFpsChoices = new ArrayList<Integer>();
+    private final List<CameraDevices.Device> mCameras = new ArrayList<CameraDevices.Device>();
 
     private TextView mStatus;
     private TextView mDetail;
     private TextView mDir;
+    private Spinner mSpCamera;
     private Spinner mSpResolution;
     private Spinner mSpFps;
     private Spinner mSpOrientation;
@@ -88,18 +91,22 @@ public class MainActivity extends Activity {
     private Button mBtnToggle;
     private SharedPreferences mPrefs;
 
+    private int mLastLoadedCameraId = -1;
+    private CameraCapabilities mCapabilities;
+    private long mFpsSizeKey = -1;
     private String mShownError;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        mPrefs = getPreferences(MODE_PRIVATE);
+        RecorderPrefs.migrateIfNeeded(this);
+        mPrefs = RecorderPrefs.get(this);
         migratePreferences();
-
         mStatus = (TextView) findViewById(R.id.status);
         mDetail = (TextView) findViewById(R.id.detail);
         mDir = (TextView) findViewById(R.id.dir);
+        mSpCamera = (Spinner) findViewById(R.id.sp_camera);
         mSpResolution = (Spinner) findViewById(R.id.sp_resolution);
         mSpFps = (Spinner) findViewById(R.id.sp_fps);
         mSpOrientation = (Spinner) findViewById(R.id.sp_orientation);
@@ -111,7 +118,7 @@ public class MainActivity extends Activity {
                 getResources().getStringArray(R.array.orientation_labels));
         orientationAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         mSpOrientation.setAdapter(orientationAdapter);
-        mSpOrientation.setSelection(0);
+        mSpOrientation.setSelection(defaultOrientationIndex());
 
         ArrayAdapter<String> segmentAdapter = new ArrayAdapter<String>(
                 this, android.R.layout.simple_spinner_item,
@@ -127,9 +134,67 @@ public class MainActivity extends Activity {
             }
         });
 
+        mSpResolution.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position < 0 || position >= mSizes.size()) {
+                    return;
+                }
+                int[] size = mSizes.get(position);
+                if (sizeKey(size[0], size[1]) == mFpsSizeKey) {
+                    return;
+                }
+                syncFpsChoices(selectedFps());
+                persistCurrentConfig();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // no-op
+            }
+        });
+
+        mSpFps.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                persistCurrentConfig();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // no-op
+            }
+        });
+
+        mSpOrientation.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                persistCurrentConfig();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // no-op
+            }
+        });
+
+        mSpSegment.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                persistCurrentConfig();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // no-op
+            }
+        });
+
         mDir.setText(getString(R.string.save_dir, outputDirPath()));
+        initCameraSpinner();
         loadCapabilities();
         updateUi();
+        startStandbyServiceIfIdle();
     }
 
     @Override
@@ -194,11 +259,69 @@ public class MainActivity extends Activity {
     }
 
     // ---------------------------------------------------------------------
+    // 摄像头列表
+    // ---------------------------------------------------------------------
+
+    private void initCameraSpinner() {
+        mCameras.clear();
+        mCameras.addAll(CameraDevices.query());
+
+        List<String> labels = new ArrayList<String>();
+        for (CameraDevices.Device device : mCameras) {
+            labels.add(CameraDevices.label(device, mCameras.size()));
+        }
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        mSpCamera.setAdapter(adapter);
+
+        int savedId = mPrefs.getInt(PREF_CAMERA, mCameras.get(0).id);
+        int index = 0;
+        for (int i = 0; i < mCameras.size(); i++) {
+            if (mCameras.get(i).id == savedId) {
+                index = i;
+                break;
+            }
+        }
+        mSpCamera.setSelection(index);
+        mLastLoadedCameraId = mCameras.get(index).id;
+
+        mSpCamera.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                int cameraId = selectedCameraId();
+                if (cameraId == mLastLoadedCameraId) {
+                    return;
+                }
+                loadCapabilities(cameraId);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // no-op
+            }
+        });
+    }
+
+    private int selectedCameraId() {
+        int position = mSpCamera.getSelectedItemPosition();
+        if (position >= 0 && position < mCameras.size()) {
+            return mCameras.get(position).id;
+        }
+        return RecorderConfig.DEFAULT_CAMERA_ID;
+    }
+
+    // ---------------------------------------------------------------------
     // 相机能力与下拉框
     // ---------------------------------------------------------------------
 
     private void loadCapabilities() {
-        CameraCapabilities cached = CameraCapabilities.getCached();
+        loadCapabilities(selectedCameraId());
+    }
+
+    private void loadCapabilities(final int cameraId) {
+        mLastLoadedCameraId = cameraId;
+        CameraCapabilities cached = CameraCapabilities.getCached(cameraId);
         if (cached != null) {
             applyCapabilities(cached);
             return;
@@ -210,11 +333,11 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                final CameraCapabilities capabilities = CameraCapabilities.query();
+                final CameraCapabilities capabilities = CameraCapabilities.query(cameraId);
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        if (!isFinishing()) {
+                        if (!isFinishing() && cameraId == selectedCameraId()) {
                             applyCapabilities(capabilities);
                         }
                     }
@@ -224,6 +347,8 @@ public class MainActivity extends Activity {
     }
 
     private void applyCapabilities(CameraCapabilities capabilities) {
+        mCapabilities = capabilities;
+        mFpsSizeKey = -1;
         mSizes.clear();
         mSizes.addAll(capabilities.sizes);
 
@@ -236,18 +361,75 @@ public class MainActivity extends Activity {
         resolutionAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         mSpResolution.setAdapter(resolutionAdapter);
 
-        mFpsChoices.clear();
-        mFpsChoices.addAll(capabilities.fpsChoices);
-        List<String> fpsLabels = new ArrayList<String>();
-        for (Integer fps : capabilities.fpsChoices) {
-            fpsLabels.add(getString(R.string.fps_value, fps));
-        }
-        ArrayAdapter<String> fpsAdapter = new ArrayAdapter<String>(
-                this, android.R.layout.simple_spinner_item, fpsLabels);
-        fpsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        mSpFps.setAdapter(fpsAdapter);
-
         restoreSelection();
+        // 让 Service 在硬件按键启动时能拿到和界面一致的最新参数
+        persistCurrentConfig();
+    }
+
+    /** 保存当前界面参数，供硬件按键（Service）启动时使用。 */
+    private void persistCurrentConfig() {
+        if (mSizes.isEmpty() || mFpsChoices.isEmpty()) {
+            return;
+        }
+        saveConfig(readConfig());
+    }
+
+    private void syncFpsChoices(int preferredFps) {
+        int position = mSpResolution.getSelectedItemPosition();
+        List<Integer> choices;
+        long key = -1;
+        if (mCapabilities != null && position >= 0 && position < mSizes.size()) {
+            int[] size = mSizes.get(position);
+            choices = mCapabilities.fpsChoicesFor(size[0], size[1]);
+            key = sizeKey(size[0], size[1]);
+        } else if (mCapabilities != null) {
+            choices = mCapabilities.fpsChoices;
+        } else {
+            choices = new ArrayList<Integer>();
+        }
+
+        mFpsChoices.clear();
+        mFpsChoices.addAll(choices);
+        if (mFpsChoices.isEmpty()) {
+            mFpsChoices.add(RecorderConfig.DEFAULT_FPS);
+        }
+
+        List<String> labels = new ArrayList<String>();
+        for (Integer fps : mFpsChoices) {
+            labels.add(getString(R.string.fps_value, fps));
+        }
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        mSpFps.setAdapter(adapter);
+
+        int index = preferredFps > 0 ? mFpsChoices.indexOf(preferredFps) : -1;
+        if (index < 0) {
+            index = 0;
+        }
+        mSpFps.setSelection(index);
+        mFpsSizeKey = key;
+    }
+
+    private int selectedFps() {
+        int position = mSpFps.getSelectedItemPosition();
+        if (position >= 0 && position < mFpsChoices.size()) {
+            return mFpsChoices.get(position);
+        }
+        return 0;
+    }
+
+    private static long sizeKey(int width, int height) {
+        return ((long) width << 32) | (height & 0xffffffffL);
+    }
+
+    private static int defaultOrientationIndex() {
+        for (int i = 0; i < ORIENTATION_VALUES.length; i++) {
+            if (ORIENTATION_VALUES[i] == RecorderConfig.DEFAULT_ORIENTATION) {
+                return i;
+            }
+        }
+        return 0;
     }
 
     private void restoreSelection() {
@@ -274,14 +456,8 @@ public class MainActivity extends Activity {
             mSpResolution.setSelection(sizeIndex);
         }
 
-        // 帧率：同样默认选最高档（列表已按帧率降序）
-        int fpsIndex = fps > 0 ? mFpsChoices.indexOf(fps) : -1;
-        if (fpsIndex < 0 && !mFpsChoices.isEmpty()) {
-            fpsIndex = 0;
-        }
-        if (fpsIndex >= 0) {
-            mSpFps.setSelection(fpsIndex);
-        }
+        // 帧率：按所选分辨率过滤后再选，默认该分辨率下的最高档
+        syncFpsChoices(fps);
 
         int segmentIndex = -1;
         for (int i = 0; i < SEGMENT_VALUES.length; i++) {
@@ -335,18 +511,25 @@ public class MainActivity extends Activity {
             orientation = ORIENTATION_VALUES[orientationIndex];
         }
 
-        return new RecorderConfig(size[0], size[1], fps, segmentMs, orientation);
+        return new RecorderConfig(size[0], size[1], fps, segmentMs, orientation, selectedCameraId());
     }
 
     private void saveConfig(RecorderConfig config) {
-        mPrefs.edit()
-                .putInt(PREF_WIDTH, config.width)
-                .putInt(PREF_HEIGHT, config.height)
-                .putInt(PREF_FPS, config.fps)
-                .putLong(PREF_SEGMENT, config.segmentMs)
-                .putInt(PREF_ORIENTATION, config.orientation)
-                .putInt(PREF_CONFIG_VERSION, CONFIG_VERSION)
-                .apply();
+        RecorderPrefs.save(this, config);
+    }
+
+    /** 打开 APP 后让服务进入待机，确保蓝牙播放/暂停键随时能开始录制。 */
+    private void startStandbyServiceIfIdle() {
+        if (RecorderEngine.get().isBusy()) {
+            return;
+        }
+        Intent intent = new Intent(this, RecorderService.class)
+                .setAction(RecorderService.ACTION_STANDBY);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
     }
 
     /**
@@ -401,6 +584,7 @@ public class MainActivity extends Activity {
         }
 
         mBtnToggle.setText(busy ? R.string.btn_stop : R.string.btn_start);
+        mSpCamera.setEnabled(!busy);
         mSpResolution.setEnabled(!busy);
         mSpFps.setEnabled(!busy);
         mSpOrientation.setEnabled(!busy);

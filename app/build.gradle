@@ -52,6 +52,11 @@ android {
         // 目标机型是 Android 5.1，targetSdk 28 是有意保留的（避免分区存储等新限制）
         disable 'ExpiredTargetSdkVersion'
     }
+
+    androidResources {
+        // WAV 提示音需要保持未压缩，SoundPool 才能直接读取
+        noCompress 'wav'
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {

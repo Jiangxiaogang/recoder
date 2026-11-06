@@ -10,6 +10,7 @@
     <string name="detail_starting">正在启动相机…</string>
     <string name="detail_file">当前文件：%1$s</string>
 
+    <string name="label_camera">摄像头</string>
     <string name="label_resolution">分辨率</string>
     <string name="label_fps">帧率</string>
     <string name="label_orientation">视频方向</string>
@@ -30,4 +31,7 @@
     <string name="notif_preparing">正在准备录制…</string>
     <string name="notif_recording">录制中 %1$s · %2$s</string>
     <string name="notif_error">录制出错：%1$s</string>
+    <string name="notif_standby">待机中：按蓝牙播放/暂停键开始录制</string>
+
+    <string name="btn_exit_standby">退出待机</string>
 </resources>

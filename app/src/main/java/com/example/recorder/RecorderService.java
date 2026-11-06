@@ -7,17 +7,25 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.Surface;
 
 /**
- * 录制前台服务：持有离屏预览表面、唤醒锁与通知，相机与 MediaRecorder 由 {@link RecorderEngine} 管理。
- * 因为录制过程完全不依赖 Activity 的窗口，所以按 POWER 熄屏后仍会继续录制。
+ * 录制前台服务：持有离屏预览表面、唤醒锁、通知、MediaSession（蓝牙媒体键）与提示音。
+ * 相机与 MediaRecorder 由 {@link RecorderEngine} 管理，录制不依赖 Activity 窗口，
+ * 因此按 POWER 熄屏后仍会继续录制。
+ * <p>
+ * 「待机」状态下服务保持前台并持有活跃 MediaSession，
+ * 按蓝牙键盘/耳机发送的播放暂停键（KEYCODE_MEDIA_PLAY_PAUSE）即可开始或停止录制。
  */
 public class RecorderService extends Service {
 
@@ -25,18 +33,29 @@ public class RecorderService extends Service {
 
     public static final String ACTION_START = "com.example.recorder.action.START";
     public static final String ACTION_STOP = "com.example.recorder.action.STOP";
+    /** 进入待机：保持前台通知与 MediaSession，等待硬件按键。 */
+    public static final String ACTION_STANDBY = "com.example.recorder.action.STANDBY";
+    /** 退出待机：结束服务与通知（硬件按键失效，直到再次打开 APP）。 */
+    public static final String ACTION_EXIT = "com.example.recorder.action.EXIT";
 
     private static final String CHANNEL_ID = "recorder_channel";
     private static final int NOTIFICATION_ID = 1001;
     private static final int TICK_INTERVAL_MS = 1000;
     private static final int GRACE_TICKS = 5;
+    private static final long TOGGLE_DEBOUNCE_MS = 500;
 
     private final Handler mMain = new Handler(Looper.getMainLooper());
 
     private PowerManager.WakeLock mWakeLock;
     private PreviewSurface mPreviewSurface;
     private RecorderConfig mConfig;
+    private MediaSession mMediaSession;
+    private SoundPlayer mSound;
     private boolean mStopRequested;
+    private boolean mExitRequested;
+    private boolean mStandby;
+    private boolean mWasRecording;
+    private long mLastToggleElapsed;
     private int mTicks;
 
     private final Runnable mUpdate = new Runnable() {
@@ -45,59 +64,91 @@ public class RecorderService extends Service {
             RecorderEngine engine = RecorderEngine.get();
             mTicks++;
 
-            if (mStopRequested) {
+            if (mExitRequested) {
                 if (!engine.isBusy()) {
-                    finish();
+                    shutdown();
+                    return;
+                }
+            } else if (mStopRequested) {
+                if (!engine.isBusy()) {
+                    enterStandby();
                     return;
                 }
             } else if (engine.getState() == RecorderEngine.STATE_ERROR) {
-                updateNotification(getString(R.string.notif_error, safe(engine.getLastError())));
-                mTicks = -1000;
+                updateNotification(getString(R.string.notif_error, safe(engine.getLastError())), false);
                 mMain.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        finish();
+                        if (!mExitRequested) {
+                            enterStandby();
+                        }
                     }
                 }, 1500);
                 return;
             } else if (!engine.isBusy() && mTicks > GRACE_TICKS) {
-                // 引擎意外停止（例如系统回收相机），收尾避免留下一个空的前台服务
-                finish();
+                // 引擎意外停止（例如系统回收相机），回到待机而不是留下空服务
+                enterStandby();
                 return;
             }
 
-            updateNotification(buildStatusText(engine, mConfig));
+            updateNotification(buildStatusText(engine, mConfig), false);
             mMain.postDelayed(this, TICK_INTERVAL_MS);
+        }
+    };
+
+    private final RecorderEngine.Listener mEngineListener = new RecorderEngine.Listener() {
+        @Override
+        public void onEngineStateChanged(RecorderEngine engine) {
+            mMain.post(new Runnable() {
+                @Override
+                public void run() {
+                    RecorderEngine engine = RecorderEngine.get();
+                    boolean recording = engine.getState() == RecorderEngine.STATE_RECORDING;
+                    if (recording != mWasRecording) {
+                        mWasRecording = recording;
+                        playToggleSound(recording);
+                        updatePlaybackState();
+                    }
+                    if (!mStopRequested && !mExitRequested && recording) {
+                        mStandby = false;
+                        updateNotification(buildStatusText(engine, mConfig), false);
+                        mMain.removeCallbacks(mUpdate);
+                        mMain.postDelayed(mUpdate, TICK_INTERVAL_MS);
+                    }
+                }
+            });
         }
     };
 
     @Override
     public void onCreate() {
         super.onCreate();
-        RecorderEngine.get().setListener(new RecorderEngine.Listener() {
-            @Override
-            public void onEngineStateChanged(RecorderEngine engine) {
-                mMain.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!mStopRequested && RecorderEngine.get().getState() == RecorderEngine.STATE_RECORDING) {
-                            updateNotification(buildStatusText(RecorderEngine.get(), mConfig));
-                            mMain.removeCallbacks(mUpdate);
-                            mMain.postDelayed(mUpdate, TICK_INTERVAL_MS);
-                        }
-                    }
-                });
-            }
-        });
+        initMediaSession();
+        mSound = new SoundPlayer(this);
+        RecorderEngine.get().setListener(mEngineListener);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
 
+        if (ACTION_EXIT.equals(action)) {
+            mExitRequested = true;
+            mStandby = false;
+            mMain.removeCallbacks(mUpdate);
+            if (RecorderEngine.get().isBusy()) {
+                mStopRequested = true;
+                RecorderEngine.get().stop();
+                mMain.postDelayed(mUpdate, 200);
+            } else {
+                shutdown();
+            }
+            return START_NOT_STICKY;
+        }
+
         if (ACTION_STOP.equals(action)) {
             requestStop();
-            return START_NOT_STICKY;
+            return START_STICKY;
         }
 
         if (ACTION_START.equals(action)) {
@@ -105,32 +156,90 @@ public class RecorderService extends Service {
                 // 已经在录制或正在准备，忽略重复的启动请求
                 return START_STICKY;
             }
-            mConfig = RecorderConfig.fromIntent(intent);
-            mStopRequested = false;
-            mTicks = 0;
-            acquireWakeLock();
-            startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notif_preparing)));
-            startPreviewSurface();
-            mMain.removeCallbacks(mUpdate);
-            mMain.postDelayed(mUpdate, TICK_INTERVAL_MS);
+            startRecording(RecorderConfig.fromIntent(intent));
             return START_STICKY;
         }
 
-        // 进程被系统重建时没有配置，无法恢复相机状态，直接结束，避免残留空服务
-        Log.w(TAG, "收到无 Action 的启动请求，结束服务");
-        requestStop();
-        return START_NOT_STICKY;
+        if (ACTION_STANDBY.equals(action)) {
+            if (!RecorderEngine.get().isBusy()) {
+                enterStandby();
+            }
+            return START_STICKY;
+        }
+
+        // 进程被系统重建（sticky）时没有配置，进入待机等待按键
+        Log.w(TAG, "收到无 Action 的启动请求，进入待机");
+        if (!RecorderEngine.get().isBusy()) {
+            enterStandby();
+        }
+        return START_STICKY;
+    }
+
+    // ---------------------------------------------------------------------
+    // 录制控制
+    // ---------------------------------------------------------------------
+
+    private void startRecording(RecorderConfig config) {
+        mConfig = config;
+        mStandby = false;
+        mStopRequested = false;
+        mExitRequested = false;
+        mTicks = 0;
+        acquireWakeLock();
+        startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notif_preparing), false));
+        startPreviewSurface();
+        updatePlaybackState();
+        mMain.removeCallbacks(mUpdate);
+        mMain.postDelayed(mUpdate, TICK_INTERVAL_MS);
+    }
+
+    /** 回到待机：释放相机/预览/唤醒锁，保留前台通知与 MediaSession。 */
+    private void enterStandby() {
+        mStandby = true;
+        mStopRequested = false;
+        mWasRecording = false;
+        mMain.removeCallbacks(mUpdate);
+        releasePreview();
+        releaseWakeLock();
+        startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notif_standby), true));
+        updatePlaybackState();
+    }
+
+    private void requestStop() {
+        if (mStandby && !RecorderEngine.get().isBusy()) {
+            return;
+        }
+        mStopRequested = true;
+        mMain.removeCallbacks(mUpdate);
+        RecorderEngine.get().stop();
+        mMain.postDelayed(mUpdate, 200);
+    }
+
+    private void shutdown() {
+        mMain.removeCallbacks(mUpdate);
+        releasePreview();
+        releaseWakeLock();
+        if (mMediaSession != null) {
+            try {
+                mMediaSession.setActive(false);
+            } catch (Throwable ignored) {
+                // ignore
+            }
+        }
+        try {
+            stopForeground(true);
+        } catch (Throwable ignored) {
+            // ignore
+        }
+        stopSelf();
     }
 
     private void startPreviewSurface() {
-        if (mPreviewSurface != null) {
-            mPreviewSurface.release();
-            mPreviewSurface = null;
-        }
+        releasePreview();
         mPreviewSurface = new PreviewSurface(this, new PreviewSurface.Callback() {
             @Override
             public void onSurfaceReady(Surface surface) {
-                if (mStopRequested) {
+                if (mStopRequested || mExitRequested) {
                     return;
                 }
                 RecorderEngine.get().start(getApplicationContext(), mConfig, surface);
@@ -138,7 +247,7 @@ public class RecorderService extends Service {
 
             @Override
             public void onSurfaceLost() {
-                if (!mStopRequested) {
+                if (!mStopRequested && !mExitRequested) {
                     RecorderEngine.get().onPreviewSurfaceLost();
                 }
             }
@@ -149,37 +258,131 @@ public class RecorderService extends Service {
         }
     }
 
-    private void requestStop() {
-        mStopRequested = true;
-        mMain.removeCallbacks(mUpdate);
-        RecorderEngine.get().stop();
-        mMain.postDelayed(mUpdate, 200);
-    }
-
-    private void finish() {
-        mMain.removeCallbacks(mUpdate);
+    private void releasePreview() {
         if (mPreviewSurface != null) {
             mPreviewSurface.release();
             mPreviewSurface = null;
         }
-        releaseWakeLock();
+    }
+
+    // ---------------------------------------------------------------------
+    // 硬件按键（MediaSession）
+    // ---------------------------------------------------------------------
+
+    private void initMediaSession() {
         try {
-            stopForeground(true);
+            mMediaSession = new MediaSession(this, "recorder_media_session");
+            mMediaSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS
+                    | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+            mMediaSession.setCallback(new MediaSession.Callback() {
+                @Override
+                public boolean onMediaButtonEvent(Intent mediaButtonIntent) {
+                    KeyEvent event = mediaButtonIntent == null ? null
+                            : (KeyEvent) mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+                    if (event != null
+                            && event.getAction() == KeyEvent.ACTION_DOWN
+                            && event.getRepeatCount() == 0
+                            && isToggleKey(event.getKeyCode())) {
+                        toggleFromHardware();
+                        return true;
+                    }
+                    return super.onMediaButtonEvent(mediaButtonIntent);
+                }
+
+                @Override
+                public void onPlay() {
+                    toggleFromHardware();
+                }
+
+                @Override
+                public void onPause() {
+                    toggleFromHardware();
+                }
+            });
+            mMediaSession.setActive(true);
+            updatePlaybackState();
+        } catch (Throwable t) {
+            Log.w(TAG, "初始化 MediaSession 失败", t);
+        }
+    }
+
+    private static boolean isToggleKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY
+                || keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE
+                || keyCode == KeyEvent.KEYCODE_HEADSETHOOK;
+    }
+
+    /** 蓝牙/有线耳机的播放暂停键：录制中则停止，否则用上次参数开始录制。 */
+    private void toggleFromHardware() {
+        long now = SystemClock.elapsedRealtime();
+        if (now - mLastToggleElapsed < TOGGLE_DEBOUNCE_MS) {
+            return;
+        }
+        mLastToggleElapsed = now;
+        if (RecorderEngine.get().isBusy()) {
+            Log.i(TAG, "硬件按键：停止录制");
+            requestStop();
+        } else {
+            Log.i(TAG, "硬件按键：开始录制");
+            startRecording(RecorderPrefs.load(this));
+        }
+    }
+
+    private void updatePlaybackState() {
+        if (mMediaSession == null) {
+            return;
+        }
+        try {
+            boolean busy = RecorderEngine.get().isBusy();
+            mMediaSession.setPlaybackState(new PlaybackState.Builder()
+                    .setActions(PlaybackState.ACTION_PLAY
+                            | PlaybackState.ACTION_PAUSE
+                            | PlaybackState.ACTION_PLAY_PAUSE
+                            | PlaybackState.ACTION_STOP)
+                    .setState(busy ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+                            PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1.0f)
+                    .build());
         } catch (Throwable ignored) {
             // ignore
         }
-        stopSelf();
     }
+
+    /** 开始：一声稍长的「叮~」；停止：两声较短的「咚咚」。 */
+    private void playToggleSound(boolean start) {
+        if (mSound == null) {
+            return;
+        }
+        if (start) {
+            mSound.playStart();
+        } else {
+            mSound.playStop();
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 生命周期
+    // ---------------------------------------------------------------------
 
     @Override
     public void onDestroy() {
         mMain.removeCallbacks(mUpdate);
         RecorderEngine.get().setListener(null);
-        if (mPreviewSurface != null) {
-            mPreviewSurface.release();
-            mPreviewSurface = null;
-        }
+        releasePreview();
         releaseWakeLock();
+        if (mMediaSession != null) {
+            try {
+                mMediaSession.setActive(false);
+                mMediaSession.release();
+            } catch (Throwable ignored) {
+                // ignore
+            }
+            mMediaSession = null;
+        }
+        if (mSound != null) {
+            mSound.release();
+            mSound = null;
+        }
         super.onDestroy();
     }
 
@@ -229,14 +432,14 @@ public class RecorderService extends Service {
         return getString(R.string.notif_recording, formatDuration(engine.getTotalElapsedMs()), resolution);
     }
 
-    private void updateNotification(String text) {
+    private void updateNotification(String text, boolean standbyMode) {
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
-            manager.notify(NOTIFICATION_ID, buildNotification(text));
+            manager.notify(NOTIFICATION_ID, buildNotification(text, standbyMode));
         }
     }
 
-    private Notification buildNotification(String text) {
+    private Notification buildNotification(String text, boolean standbyMode) {
         Intent openIntent = new Intent(this, MainActivity.class);
         openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
@@ -260,9 +463,15 @@ public class RecorderService extends Service {
                 .setOngoing(true)
                 .setShowWhen(false);
 
-        Intent stopIntent = new Intent(this, RecorderService.class).setAction(ACTION_STOP);
-        PendingIntent stopPendingIntent = PendingIntent.getService(this, 1, stopIntent, pendingFlags);
-        builder.addAction(R.drawable.ic_stat_rec, getString(R.string.btn_stop), stopPendingIntent);
+        if (standbyMode) {
+            Intent exitIntent = new Intent(this, RecorderService.class).setAction(ACTION_EXIT);
+            PendingIntent exitPendingIntent = PendingIntent.getService(this, 2, exitIntent, pendingFlags);
+            builder.addAction(R.drawable.ic_stat_rec, getString(R.string.btn_exit_standby), exitPendingIntent);
+        } else {
+            Intent stopIntent = new Intent(this, RecorderService.class).setAction(ACTION_STOP);
+            PendingIntent stopPendingIntent = PendingIntent.getService(this, 1, stopIntent, pendingFlags);
+            builder.addAction(R.drawable.ic_stat_rec, getString(R.string.btn_stop), stopPendingIntent);
+        }
 
         return builder.build();
     }

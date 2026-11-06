@@ -40,7 +40,6 @@ public final class RecorderEngine {
 
     private static final String TAG = "RecorderEngine";
 
-    private static final int CAMERA_ID = 0;
     private static final int MAX_RESTART_FAILURES = 3;
     private static final int ROLLOVER_DELAY_MS = 300;
     private static final int RESTART_RETRY_DELAY_MS = 500;
@@ -253,12 +252,12 @@ public final class RecorderEngine {
         releaseCamera();
 
         Camera.CameraInfo info = new Camera.CameraInfo();
-        Camera.getCameraInfo(CAMERA_ID, info);
+        Camera.getCameraInfo(config.cameraId, info);
         mSensorOrientation = info.orientation;
 
         Camera camera;
         try {
-            camera = Camera.open(CAMERA_ID);
+            camera = Camera.open(config.cameraId);
         } catch (RuntimeException e) {
             throw new IOException("相机可能被其他应用占用", e);
         }
@@ -374,6 +373,8 @@ public final class RecorderEngine {
             recorder.prepare();
             recorder.start();
 
+            Log.i(TAG, "开始录制 camera=" + mConfig.cameraId + " " + mVideoWidth + "x" + mVideoHeight
+                    + "@" + mVideoFps + "fps");
             mRecorder = recorder;
             mCurrentFile = finalFile.getAbsolutePath();
             mSegmentStartElapsed = SystemClock.elapsedRealtime();
@@ -415,7 +416,7 @@ public final class RecorderEngine {
         recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
         recorder.setVideoSource(MediaRecorder.VideoSource.CAMERA);
 
-        CamcorderProfile profile = findProfile(mVideoWidth, mVideoHeight);
+        CamcorderProfile profile = findProfile(mConfig == null ? 0 : mConfig.cameraId, mVideoWidth, mVideoHeight);
         if (profile != null) {
             // 使用系统 CamcorderProfile 可以避免 H.264 level 不匹配导致的启动失败。
             recorder.setProfile(profile);
@@ -442,7 +443,7 @@ public final class RecorderEngine {
         }
     }
 
-    private CamcorderProfile findProfile(int width, int height) {
+    private CamcorderProfile findProfile(int cameraId, int width, int height) {
         int[] qualities = new int[]{
                 CamcorderProfile.QUALITY_1080P,
                 CamcorderProfile.QUALITY_720P,
@@ -453,10 +454,10 @@ public final class RecorderEngine {
         };
         for (int quality : qualities) {
             try {
-                if (!CamcorderProfile.hasProfile(CAMERA_ID, quality)) {
+                if (!CamcorderProfile.hasProfile(cameraId, quality)) {
                     continue;
                 }
-                CamcorderProfile profile = CamcorderProfile.get(CAMERA_ID, quality);
+                CamcorderProfile profile = CamcorderProfile.get(cameraId, quality);
                 if (profile != null
                         && profile.videoFrameWidth == width
                         && profile.videoFrameHeight == height) {
