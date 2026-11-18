@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string-array name="orientation_labels">
-        <item>横屏</item>
-        <item>竖屏</item>
-        <item>自动</item>
+        <item>@string/orientation_landscape</item>
+        <item>@string/orientation_portrait</item>
+        <item>@string/orientation_auto</item>
     </string-array>
 
     <string-array name="feedback_labels">
-        <item>无</item>
-        <item>音效</item>
-        <item>振动</item>
-        <item>音效+振动</item>
+        <item>@string/feedback_none</item>
+        <item>@string/feedback_sound</item>
+        <item>@string/feedback_vibrate</item>
+        <item>@string/feedback_sound_vibrate</item>
     </string-array>
 
     <string-array name="segment_labels">

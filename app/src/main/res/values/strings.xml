@@ -34,4 +34,28 @@
     <string name="notif_standby">待机中：按蓝牙播放/暂停键开始录制</string>
 
     <string name="btn_exit_standby">退出待机</string>
+
+    <!-- 视频方向 -->
+    <string name="orientation_landscape">横屏</string>
+    <string name="orientation_portrait">竖屏</string>
+    <string name="orientation_auto">自动</string>
+
+    <!-- 启停反馈 -->
+    <string name="feedback_none">无</string>
+    <string name="feedback_sound">音效</string>
+    <string name="feedback_vibrate">振动</string>
+    <string name="feedback_sound_vibrate">音效+振动</string>
+
+    <!-- 摄像头名称 -->
+    <string name="camera_facing_back">后置摄像头</string>
+    <string name="camera_facing_front">前置摄像头</string>
+    <string name="camera_facing_external">外接摄像头</string>
+    <string name="camera_label_with_id">%1$s（ID %2$d）</string>
+
+    <!-- 无障碍服务（音量键录制） -->
+    <string name="accessibility_service_label">音量键录制</string>
+    <string name="accessibility_service_description">监听音量键：按下音量加或音量减即可开始/停止录制，熄屏时同样有效。</string>
+    <string name="btn_enable_volume">开启音量键录制</string>
+    <string name="hint_volume_key">在系统“辅助功能”中开启“音量键录制”后，熄屏或后台按音量键也能切换录制。</string>
+    <string name="toast_no_accessibility_settings">无法打开系统辅助功能设置</string>
 </resources>

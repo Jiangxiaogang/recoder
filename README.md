@@ -9,6 +9,7 @@
 - **摄像头、分辨率、帧率、视频方向**可在界面中选择（摄像头列表来自设备，切换后分辨率/帧率自动刷新）；
 - 视频方向可**强制横屏 / 竖屏 / 自动跟随手机**（默认自动）；
 - **蓝牙键盘 / 蓝牙耳机的播放暂停键（KEYCODE_MEDIA_PLAY_PAUSE）可一键开始/停止录制**；开始播放一声稍长的「叮~」、停止播放两声较短的「咚咚」，熄屏状态同样有效；
+- **音量键（加/减）短按可切换录制**：通过无障碍服务实现，熄屏/后台同样有效；需在「设置 → 辅助功能」中开启「音量键录制」（界面有快捷入口）；
 - **提示音可下拉选择**：无 / 音效 / 振动 / 音效+振动（默认音效）；振动在开始为一次长振、停止为两次短振。
 
 ## 1. 目录结构
@@ -89,8 +90,10 @@ android.bat adb install -r release\Recorder-1.0-release.apk
 5. 再进入 APP 点“停止录制”，或直接在通知上点“停止”；
 6. 蓝牙键盘/耳机的**播放暂停键**可随时开始/停止录制（开始双短音、停止单短音）。打开过一次 APP 后服务会进入待机，通知显示“待机中：按蓝牙播放/暂停键开始录制”；点通知里的“退出待机”会结束服务（按键失效，直到再次打开 APP）。
 
-文件保存到：`/storage/emulated/0/DCIM/Recorder/yyyy-MM-dd/REC_yyyyMMdd_HHmmss_XX.mp4`
-（按录制日期自动建立 `2026-11-06` 这样的子目录，跨天续录会写入新日期目录）
+文件保存到：`/storage/emulated/0/DCIM/Recorder/REC_yyyyMMdd_HHmmss_XX.mp4`
+（所有视频统一放在 `Recorder` 目录下，不再按日期建立子目录；文件名含日期时间避免冲突）
+
+> 创建新文件时会检查剩余空间：若低于 **2GB**，自动删除目录里**最旧**的视频（按最后修改时间）腾出空间，直到空间足够或没有可删的旧视频。
 
 > 录制过程中文件名为 `..._XX.mp4.tmp`，正常结束（含分段到点）后立即改名为 `..._XX.mp4` 并通知媒体库；
 > 因此相册/媒体库里不会出现半截文件。若录制异常中断（进程被杀等），会保留 `.tmp` 便于识别。
@@ -106,6 +109,7 @@ android.bat adb install -r release\Recorder-1.0-release.apk
 | 摄像头选择 | 用 `Camera.getNumberOfCameras()` + `Camera.getCameraInfo()` 列出设备摄像头（后置/前置/外接），按 `Camera.open(id)` 打开所选摄像头，`CamcorderProfile` 与录制参数也都按该 id 查询 |
 | 画面方向 | 用「视频方向」下拉控制：横屏 → `setOrientationHint(0°)`（文件为 1920×1080 等横向）；竖屏 → `setOrientationHint(90°，即传感器方向)`（横向缓冲 + 旋转标记，播放器显示为 1080×1920 等竖向）；自动 → 按**每段录制开始时**的屏幕方向计算 `hint = (传感器方向 - 屏幕旋转角度 + 360) % 360`，竖持正立、横持也正立 |
 | 蓝牙按键启停 | 前台服务持有活跃 `MediaSession`，`onMediaButtonEvent` 接收 `KEYCODE_MEDIA_PLAY_PAUSE`（兼容 MEDIA_PLAY/PAUSE/HEADSETHOOK），500ms 去抖后切换录制；待机时服务常驻前台，通知显示“待机中” |
+| 音量键启停 | `VolumeKeyService`（无障碍服务）用 `FLAG_REQUEST_FILTER_KEY_EVENTS` 过滤音量键，短按加/减触发 `ACTION_TOGGLE`，复用与媒体键相同的去抖/参数/通知逻辑；音量键被消费、不再调音量 |
 | 开始/停止提示音 | 可选「无 / 音效 / 振动 / 音效+振动」。音效通过 `SoundPool`（`USAGE_MEDIA` + `CONTENT_TYPE_MUSIC`）播放 `res/raw/start.wav` / `stop.wav`；开始音时长从 WAV 文件头读取，播完后再启动相机/录音（另留 120ms 让尾音衰减），等待时长随文件自动变化；振动为开始一次 180ms、停止两次 90ms 短振。停止反馈在录音链释放后触发 |
 
 - 编码：H.264 视频 + AAC 音频，容器 MP4；录音音源使用 `MIC`；
@@ -123,11 +127,12 @@ android.bat adb install -r release\Recorder-1.0-release.apk
 8. 选择 60 分钟分段时，1080p 单个文件可能超过 4GB；若保存到 FAT32 格式的物理 SD 卡会写不进去，建议改用较短分段或保存在内置存储。
 9. **硬件按键会与音乐 APP 抢占媒体键**：本服务保持活跃 MediaSession 时，播放/暂停键会触发录制而不是续播音乐；如需边听歌边用，建议后续改成“上一曲/下一曲”双键方案。
 10. 手机重启后需要先打开一次 APP（服务才会进入待机），硬件按键才生效；如需开机自启，可后续增加 `BOOT_COMPLETED` 广播。
+11. **音量键会被本应用占用**：开启「音量键录制」无障碍服务后，音量加/减键用于切换录制、不再调整音量；如需恢复音量键调音量，到「设置 → 辅助功能」关闭该服务即可。
 
 ## 6. 排错
 
 ```bat
-android.bat adb logcat -s RecorderEngine RecorderService PreviewSurface
+android.bat adb logcat -s RecorderEngine RecorderService PreviewSurface VolumeKeyService
 ```
 
 - “打开相机失败”：相机被其它应用占用，或未授予相机权限；
@@ -150,7 +155,7 @@ android.bat adb logcat -s RecorderEngine RecorderService PreviewSurface
 | 列表尺寸实测可录 | ✅ 逐个录 5 秒并解析 MP4：800×480、640×480、640×360、480×320 均输出对应尺寸（avc1，≈30fps），无启动失败 |
 | 分辨率设置 | ✅ 选 640×480 输出 tkhd=640×480；选 1920×1080 输出 tkhd=1920×1080，均正常录制 |
 | 帧率设置 | ✅ 选 24fps 实测平均 **23.9fps**；选 15fps 实测 **14.86 / 14.79fps**，重启 APP 后选择可恢复 |
-| **按日期分目录** | ✅ 文件写入 `/sdcard/DCIM/Recorder/2026-11-06/REC_20261106_112911_01.mp4`，界面同步显示当天目录 |
+| **保存目录** | ✅ 文件统一写入 `/sdcard/DCIM/Recorder/REC_20261106_112911_01.mp4`，界面同步显示该目录 |
 | **录制中先写 .tmp** | ✅ 录制中目录里是 `REC_..._01.mp4.tmp`；停止后变为 `REC_..._01.mp4`；1 分钟分段到点时前一段立即改名、下一段继续写 `.tmp` |
 | **默认档位** | ✅ 清空数据后打开：分辨率 1920×1080（设备最高）、帧率 30 fps（设备最高）、视频方向 自动、分段 5 分钟 |
 | **分段选项** | ✅ 1 / 3 / 5 / 10 / 30 / 60 分钟 + 不分割；选 10 分钟后 `setMaxDuration=600000` 正常开始录制 |

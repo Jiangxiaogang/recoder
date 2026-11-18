@@ -10,6 +10,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.StatFs;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Display;
@@ -19,6 +20,9 @@ import android.view.WindowManager;
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -43,6 +47,8 @@ public final class RecorderEngine {
     private static final int MAX_RESTART_FAILURES = 3;
     private static final int ROLLOVER_DELAY_MS = 300;
     private static final int RESTART_RETRY_DELAY_MS = 500;
+    /** 剩余空间低于该阈值时，自动删除最旧的视频腾出空间。 */
+    private static final long MIN_FREE_SPACE_BYTES = 2L * 1024 * 1024 * 1024; // 2GB
 
     public static final int STATE_IDLE = 0;
     public static final int STATE_RECORDING = 1;
@@ -331,11 +337,12 @@ public final class RecorderEngine {
         if (mCamera == null) {
             return false;
         }
-        File segmentDir = dateDir();
+        File segmentDir = mOutputDir;
         if (segmentDir == null) {
-            Log.e(TAG, "无法创建按日期划分的保存目录");
+            Log.e(TAG, "无法创建保存目录");
             return false;
         }
+        ensureFreeSpace(segmentDir);
 
         MediaRecorder recorder = null;
         try {
@@ -513,24 +520,59 @@ public final class RecorderEngine {
         return 0;
     }
 
-    /** 按日期（yyyy-MM-dd）创建当天的子目录。 */
-    private File dateDir() {
-        File base = mOutputDir;
-        if (base == null) {
-            return null;
-        }
-        File dir = new File(base, new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()));
-        if (!dir.exists() && !dir.mkdirs()) {
-            return null;
-        }
-        return dir;
-    }
-
     private String buildFileName() {
         SimpleDateFormat format = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US);
         String base = "REC_" + format.format(new Date());
         mFileIndex++;
         return String.format(Locale.US, "%s_%02d.mp4", base, mFileIndex);
+    }
+
+    /**
+     * 创建新文件前检查剩余空间：不足 {@link #MIN_FREE_SPACE_BYTES} 时，
+     * 按最后修改时间从旧到新删除目录里的正式视频，直到空间足够或没有可删的。
+     */
+    private void ensureFreeSpace(File dir) {
+        long free = availableBytes(dir);
+        if (free < 0 || free >= MIN_FREE_SPACE_BYTES) {
+            return;
+        }
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        List<File> videos = new ArrayList<File>();
+        for (File file : files) {
+            if (file.isFile() && file.getName().toLowerCase(Locale.US).endsWith(".mp4")) {
+                videos.add(file);
+            }
+        }
+        Collections.sort(videos, new Comparator<File>() {
+            @Override
+            public int compare(File a, File b) {
+                long diff = a.lastModified() - b.lastModified();
+                return diff < 0 ? -1 : (diff > 0 ? 1 : 0);
+            }
+        });
+        for (File video : videos) {
+            free = availableBytes(dir);
+            if (free < 0 || free >= MIN_FREE_SPACE_BYTES) {
+                break;
+            }
+            if (video.delete()) {
+                Log.i(TAG, "剩余空间不足，删除最旧视频：" + video.getName());
+            } else {
+                Log.w(TAG, "删除旧视频失败：" + video.getName());
+            }
+        }
+    }
+
+    private long availableBytes(File dir) {
+        try {
+            return new StatFs(dir.getAbsolutePath()).getAvailableBytes();
+        } catch (Throwable t) {
+            Log.w(TAG, "查询剩余空间失败", t);
+            return -1L;
+        }
     }
 
     /** 到达单段时长：关闭当前文件并立即开始下一段。 */

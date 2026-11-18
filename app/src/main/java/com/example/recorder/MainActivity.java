@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
@@ -99,6 +100,7 @@ public class MainActivity extends Activity {
     private Spinner mSpSegment;
     private Spinner mSpFeedback;
     private Button mBtnToggle;
+    private Button mBtnEnableVolume;
     private SharedPreferences mPrefs;
 
     private int mLastLoadedCameraId = -1;
@@ -123,6 +125,7 @@ public class MainActivity extends Activity {
         mSpSegment = (Spinner) findViewById(R.id.sp_segment);
         mSpFeedback = (Spinner) findViewById(R.id.sp_feedback);
         mBtnToggle = (Button) findViewById(R.id.btn_toggle);
+        mBtnEnableVolume = (Button) findViewById(R.id.btn_enable_volume);
 
         ArrayAdapter<String> orientationAdapter = new ArrayAdapter<String>(
                 this, android.R.layout.simple_spinner_item,
@@ -149,6 +152,18 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 onToggleClicked();
+            }
+        });
+
+        mBtnEnableVolume.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                } catch (Throwable t) {
+                    Toast.makeText(MainActivity.this, R.string.toast_no_accessibility_settings,
+                            Toast.LENGTH_SHORT).show();
+                }
             }
         });
 
@@ -298,7 +313,7 @@ public class MainActivity extends Activity {
 
         List<String> labels = new ArrayList<String>();
         for (CameraDevices.Device device : mCameras) {
-            labels.add(CameraDevices.label(device, mCameras.size()));
+            labels.add(CameraDevices.label(this, device, mCameras.size()));
         }
         ArrayAdapter<String> adapter = new ArrayAdapter<String>(
                 this, android.R.layout.simple_spinner_item, labels);
@@ -650,9 +665,7 @@ public class MainActivity extends Activity {
     }
 
     private static String outputDirPath() {
-        File base = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Recorder");
-        String date = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new java.util.Date());
-        return new File(base, date).getAbsolutePath();
+        return new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Recorder").getAbsolutePath();
     }
 
     private static String formatDuration(long ms) {

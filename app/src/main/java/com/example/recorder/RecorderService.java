@@ -38,6 +38,8 @@ public class RecorderService extends Service {
     public static final String ACTION_STANDBY = "com.example.recorder.action.STANDBY";
     /** 退出待机：结束服务与通知（硬件按键失效，直到再次打开 APP）。 */
     public static final String ACTION_EXIT = "com.example.recorder.action.EXIT";
+    /** 音量键触发的启停切换：复用与媒体键相同的去抖/参数逻辑。 */
+    public static final String ACTION_TOGGLE = "com.example.recorder.action.TOGGLE";
 
     private static final String CHANNEL_ID = "recorder_channel";
     private static final int NOTIFICATION_ID = 1001;
@@ -169,6 +171,11 @@ public class RecorderService extends Service {
 
         if (ACTION_STOP.equals(action)) {
             requestStop();
+            return START_STICKY;
+        }
+
+        if (ACTION_TOGGLE.equals(action)) {
+            toggleFromHardware();
             return START_STICKY;
         }
 
@@ -354,7 +361,7 @@ public class RecorderService extends Service {
                 || keyCode == KeyEvent.KEYCODE_HEADSETHOOK;
     }
 
-    /** 蓝牙/有线耳机的播放暂停键：录制中则停止，否则用上次参数开始录制。 */
+    /** 蓝牙/有线耳机的播放暂停键或音量键：录制中则停止，否则用上次参数开始录制。 */
     private void toggleFromHardware() {
         long now = SystemClock.elapsedRealtime();
         if (now - mLastToggleElapsed < TOGGLE_DEBOUNCE_MS) {
@@ -444,7 +451,12 @@ public class RecorderService extends Service {
     public void onDestroy() {
         mMain.removeCallbacks(mStartRunnable);
         mMain.removeCallbacks(mUpdate);
-        RecorderEngine.get().setListener(null);
+        RecorderEngine engine = RecorderEngine.get();
+        if (engine.isBusy()) {
+            // 服务被系统销毁时兜底停止引擎，避免留下无通知、无唤醒锁的持续录制
+            engine.stop();
+        }
+        engine.setListener(null);
         releasePreview();
         releaseWakeLock();
         if (mMediaSession != null) {
@@ -510,7 +522,7 @@ public class RecorderService extends Service {
         String resolution;
         if (config != null) {
             resolution = config.width + "×" + config.height + "@" + config.fps + "fps · "
-                    + config.orientationName();
+                    + config.orientationName(this);
         } else {
             resolution = engine.getVideoWidth() + "×" + engine.getVideoHeight();
         }

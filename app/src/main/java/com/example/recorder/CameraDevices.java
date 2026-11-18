@@ -1,5 +1,6 @@
 package com.example.recorder;
 
+import android.content.Context;
 import android.hardware.Camera;
 import android.util.Log;
 
@@ -44,19 +45,19 @@ public final class CameraDevices {
         return devices;
     }
 
-    public static String label(Device device, int total) {
+    public static String label(Context context, Device device, int total) {
         String base;
         switch (device.facing) {
             case Camera.CameraInfo.CAMERA_FACING_FRONT:
-                base = "前置摄像头";
+                base = context.getString(R.string.camera_facing_front);
                 break;
             case Camera.CameraInfo.CAMERA_FACING_BACK:
-                base = "后置摄像头";
+                base = context.getString(R.string.camera_facing_back);
                 break;
             default:
-                base = "外接摄像头";
+                base = context.getString(R.string.camera_facing_external);
                 break;
         }
-        return total > 1 ? base + "（ID " + device.id + "）" : base;
+        return total > 1 ? context.getString(R.string.camera_label_with_id, base, device.id) : base;
     }
 }

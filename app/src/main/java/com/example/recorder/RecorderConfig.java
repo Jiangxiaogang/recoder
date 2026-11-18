@@ -1,5 +1,6 @@
 package com.example.recorder;
 
+import android.content.Context;
 import android.content.Intent;
 
 /**
@@ -83,14 +84,14 @@ public final class RecorderConfig {
         return orientation == ORIENTATION_AUTO;
     }
 
-    public String orientationName() {
+    public String orientationName(Context context) {
         if (orientation == ORIENTATION_PORTRAIT) {
-            return "竖屏";
+            return context.getString(R.string.orientation_portrait);
         }
         if (orientation == ORIENTATION_AUTO) {
-            return "自动";
+            return context.getString(R.string.orientation_auto);
         }
-        return "横屏";
+        return context.getString(R.string.orientation_landscape);
     }
 
     public boolean hasSoundFeedback() {
@@ -99,19 +100,6 @@ public final class RecorderConfig {
 
     public boolean hasVibrationFeedback() {
         return feedbackMode == FEEDBACK_VIBRATE || feedbackMode == FEEDBACK_SOUND_VIBRATE;
-    }
-
-    public String feedbackName() {
-        switch (feedbackMode) {
-            case FEEDBACK_NONE:
-                return "无";
-            case FEEDBACK_VIBRATE:
-                return "振动";
-            case FEEDBACK_SOUND_VIBRATE:
-                return "音效+振动";
-            default:
-                return "音效";
-        }
     }
 
     public void putTo(Intent intent) {
@@ -138,8 +126,4 @@ public final class RecorderConfig {
                 intent.getIntExtra(EXTRA_FEEDBACK, DEFAULT_FEEDBACK));
     }
 
-    public String describe() {
-        String seg = segmentMs > 0 ? (segmentMs / 60000L) + " 分钟分段" : "不分割";
-        return width + "×" + height + "@" + fps + "fps · " + orientationName() + " · " + seg;
-    }
 }

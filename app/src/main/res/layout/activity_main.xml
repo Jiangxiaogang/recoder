@@ -119,6 +119,20 @@
             android:layout_marginTop="16dp"
             android:textSize="13sp" />
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/hint_volume_key"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btn_enable_volume"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/btn_enable_volume" />
+
     </LinearLayout>
 
 </ScrollView>
